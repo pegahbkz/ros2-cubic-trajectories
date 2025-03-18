@@ -1,0 +1,21 @@
+# srv/ComputeCubicTraj.srv
+# Request: CubicTrajParams
+# Response: CubicTrajCoeffs
+
+# Request (CubicTrajParams)
+float64 p0
+float64 pf
+float64 v0
+float64 vf
+float64 t0
+float64 tf
+
+---
+
+# Response (CubicTrajCoeffs)
+float64 a0
+float64 a1
+float64 a2
+float64 a3
+float64 t0
+float64 tf
