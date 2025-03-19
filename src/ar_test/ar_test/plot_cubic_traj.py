@@ -1,92 +1,71 @@
 import rclpy
 from rclpy.node import Node
 from ar_interface.msg import CubicTrajCoeffs
-from std_msgs.msg import Float64MultiArray
+from std_msgs.msg import Float64
 import numpy as np
-import matplotlib.pyplot as plt
-import os
-from datetime import datetime
 
-class TrajectoryProcessor(Node):
+class PublishCubicTraj(Node):
     def __init__(self):
-        # initialize node
-        super().__init__('trajectory_processor')
-        
-        # create subscription
+        super().__init__('publish_cubic_traj')
+
+        # Subscription to trajectory coefficients
         self.subscription = self.create_subscription(
-            CubicTrajCoeffs, 'cubic_traj_coeffs', self.process_trajectory, 10)
-        
-        # publishers for position, velocity, and acceleration
-        self.position_publisher = self.create_publisher(Float64MultiArray, 'cubic_trajectory/position', 10)
-        self.velocity_publisher = self.create_publisher(Float64MultiArray, 'cubic_trajectory/velocity', 10)
-        self.acceleration_publisher = self.create_publisher(Float64MultiArray, 'cubic_trajectory/acceleration', 10)
+            CubicTrajCoeffs, 'cubic_traj_coeffs', self.compute_trajectory, 10)
 
-        # set up the figure for plotting
-        self.fig, self.ax = plt.subplots()
+        # Publishers for position, velocity, and acceleration
+        self.position_publisher = self.create_publisher(Float64, 'cubic_trajectory/position', 10)
+        self.velocity_publisher = self.create_publisher(Float64, 'cubic_trajectory/velocity', 10)
+        self.acceleration_publisher = self.create_publisher(Float64, 'cubic_trajectory/acceleration', 10)
 
-        # directory where plots will be saved
-        self.save_dir = 'src/ar_test/ar_test/trajectory_plots'  # Change this as needed
-        if not os.path.exists(self.save_dir):
-            os.makedirs(self.save_dir)  # Create the directory if it doesn't exist
+        # Timer to publish at 0.1-second intervals
+        self.timer = self.create_timer(0.1, self.publish_next)
+        self.index = 0
+        self.t = []
+        self.p = []
+        self.v = []
+        self.a = []
+        self.trajectory_ready = False
 
-    def process_trajectory(self, msg):
+    def compute_trajectory(self, msg):
         self.get_logger().info(f'Received cubic trajectory coefficients: a0={msg.a0}, a1={msg.a1}, a2={msg.a2}, a3={msg.a3}, t0={msg.t0}, tf={msg.tf}')
-        
-        if msg.t0 >= msg.tf:
-            self.get_logger().error(f"Invalid time range: t0={msg.t0}, tf={msg.tf}. t0 should be less than tf.")
-            return
 
-        # generate time values
-        t = np.linspace(msg.t0, msg.tf, 100)
+        # Generate time values at 0.1s intervals
+        self.t = np.arange(msg.t0, msg.tf, 0.1)
 
-        # compute position, velocity, and acceleration
-        p = msg.a0 + msg.a1 * t + msg.a2 * t**2 + msg.a3 * t**3
-        v = msg.a1 + 2 * msg.a2 * t + 3 * msg.a3 * t**2
-        a = 2 * msg.a2 + 6 * msg.a3 * t
+        # Compute position, velocity, and acceleration
+        self.p = msg.a0 + msg.a1 * self.t + msg.a2 * self.t**2 + msg.a3 * self.t**3
+        self.v = msg.a1 + 2 * msg.a2 * self.t + 3 * msg.a3 * self.t**2
+        self.a = 2 * msg.a2 + 6 * msg.a3 * self.t
 
-        self.get_logger().info(f"First position values: {p[:5]}")
-        self.get_logger().info(f"First velocity values: {v[:5]}")
-        self.get_logger().info(f"First acceleration values: {a[:5]}")
+        self.index = 0  # Reset index for new trajectory
+        self.trajectory_ready = True  # Set flag to start publishing
+        self.get_logger().info("Trajectory computed. Publishing data in real-time.")
 
-        # publish messages
-        position_msg = Float64MultiArray(data=p.tolist())
-        velocity_msg = Float64MultiArray(data=v.tolist())
-        acceleration_msg = Float64MultiArray(data=a.tolist())
+    def publish_next(self):
+        if self.trajectory_ready and self.index < len(self.t):
+            # Create and publish individual Float64 messages
+            pos_msg = Float64()
+            vel_msg = Float64()
+            acc_msg = Float64()
 
-        self.position_publisher.publish(position_msg)
-        self.velocity_publisher.publish(velocity_msg)
-        self.acceleration_publisher.publish(acceleration_msg)
+            pos_msg.data = self.p[self.index]
+            vel_msg.data = self.v[self.index]
+            acc_msg.data = self.a[self.index]
 
-        self.get_logger().info("Published position, velocity, and acceleration.")
+            self.position_publisher.publish(pos_msg)
+            self.velocity_publisher.publish(vel_msg)
+            self.acceleration_publisher.publish(acc_msg)
 
-        # plot and save the trajectory
-        self.save_plot(t, p, v, a)
+            self.get_logger().info(f"Published: t={self.t[self.index]:.1f}, p={self.p[self.index]:.3f}, v={self.v[self.index]:.3f}, a={self.a[self.index]:.3f}")
 
-    def save_plot(self, t, p, v, a):
-        self.ax.clear()
-        
-        # plot the position, velocity, and acceleration
-        self.ax.plot(t, p, label='Position', color='b')
-        self.ax.plot(t, v, label='Velocity', color='g')
-        self.ax.plot(t, a, label='Acceleration', color='r')
-        self.ax.set_xlabel('Time (s)')
-        self.ax.set_ylabel('Magnitude')
-        self.ax.set_title('Cubic Trajectory')
-        self.ax.legend()
+            self.index += 1  # Move to the next value
 
-        # create plot file
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f'trajectory_plot_{timestamp}.png'
-        filepath = os.path.join(self.save_dir, filename)
-        
-        # save plot
-        plt.savefig(filepath)
-        self.get_logger().info(f"Plot saved to {filepath}")
-        self.fig.canvas.draw()
+        if self.index >= len(self.t):  
+            self.trajectory_ready = False  # Stop publishing after last value
 
 def main(args=None):
     rclpy.init(args=args)
-    node = TrajectoryProcessor()
+    node = PublishCubicTraj()
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
